@@ -1,0 +1,62 @@
+services:
+  consul-server:
+    image: hashicorp/consul:latest
+    container_name: consul-server
+    command: "agent -server -bootstrap-expect=1 -ui -client=0.0.0.0 -node consul-server"
+    ports:
+      - "8500:8500"   # Interfaz web de Consul
+      - "8600:8600/udp"  # DNS Service Discovery
+    networks:
+      - consul-net
+
+  consul-client:
+    image: hashicorp/consul:latest
+    container_name: consul-client
+    command: "agent -retry-join=consul-server -client=0.0.0.0 -node consul-client"
+    depends_on:
+      - consul-server
+    networks:
+      - consul-net
+
+  app:
+    image: python:3.12
+    container_name: app
+    working_dir: /app
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./app:/app
+    command: >
+      sh -c "pip install flask && python app.py"
+    networks:
+      - consul-net
+    depends_on:
+      - consul-client
+    environment:
+      CONSUL_HTTP_ADDR: "http://consul-client:8500"
+
+  register-service:
+    image: curlimages/curl
+    container_name: register-service
+    depends_on:
+      - app
+      - consul-client
+    command: >
+      curl --request PUT --data '{
+        "ID": "app",
+        "Name": "app-compose",
+        "Address": "192.168.80.3",
+        "Port": 5000,
+        "Check": {
+          "HTTP": "http://192.168.80.3:5000/",
+          "Interval": "10s",
+          "Timeout": "5s"
+        }
+      }' http://consul-client:8500/v1/agent/service/register
+    networks:
+      - consul-net
+
+
+networks:
+  consul-net:
+    driver: bridge
